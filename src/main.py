@@ -2,6 +2,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from mangum import Mangum
 
 from src.services.secret_service import get_secret
+from src.services.text_generation_service import generate_reply
 
 app = FastAPI()
 handler = Mangum(app)
@@ -22,10 +23,15 @@ async def webhook(
         raise HTTPException(status_code=401, detail="Bad secret")
 
     payload = await request.json()
+    message_text = payload.get("message_text")
+    if not message_text:
+        raise HTTPException(status_code=400, detail="message_text is required")
+
+    reply_text = await generate_reply(message_text)
 
     return {
         "ok": True,
         "branch": "reply_text",
-        "reply_text": "Connection works.",
+        "reply_text": reply_text,
         "echo": payload,
     }
