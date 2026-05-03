@@ -4,7 +4,12 @@ from abc import ABC, abstractmethod
 
 class ModelProvider(ABC):
     @abstractmethod
-    async def generate_reply(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def generate_reply(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        history: list[dict] | None = None,
+    ) -> str:
         raise NotImplementedError
 
 

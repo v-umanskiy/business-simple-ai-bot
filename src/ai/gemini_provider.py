@@ -12,11 +12,24 @@ class GeminiProvider(ModelProvider):
         self._model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
         self._client = genai.Client(api_key=get_secret("GEMINI_API_KEY"))
 
-    async def generate_reply(self, prompt: str, system_prompt: str | None = None) -> str:
+    async def generate_reply(
+        self,
+        prompt: str,
+        system_prompt: str | None = None,
+        history: list[dict] | None = None,
+    ) -> str:
         def _call() -> str:
             contents = []
             if system_prompt:
                 contents.append({"role": "user", "parts": [{"text": system_prompt}]})
+            if history:
+                for turn in history:
+                    role = turn.get("role")
+                    text = turn.get("text")
+                    if not text:
+                        continue
+                    gemini_role = "model" if role == "assistant" else "user"
+                    contents.append({"role": gemini_role, "parts": [{"text": text}]})
             contents.append({"role": "user", "parts": [{"text": prompt}]})
             response = self._client.models.generate_content(
                 model=self._model,
