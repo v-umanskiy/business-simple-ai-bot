@@ -12,11 +12,15 @@ class OpenAIProvider(ModelProvider):
         self._model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
         self._client = OpenAI(api_key=get_secret("OPENAI_API_KEY"))
 
-    async def generate_reply(self, prompt: str) -> str:
+    async def generate_reply(self, prompt: str, system_prompt: str | None = None) -> str:
         def _call() -> str:
+            messages = []
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
             response = self._client.chat.completions.create(
                 model=self._model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
             )
             return (response.choices[0].message.content or "").strip() or "No response"
 

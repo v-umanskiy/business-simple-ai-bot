@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 
 class ModelProvider(ABC):
     @abstractmethod
-    async def generate_reply(self, prompt: str) -> str:
+    async def generate_reply(self, prompt: str, system_prompt: str | None = None) -> str:
         raise NotImplementedError
 
 
