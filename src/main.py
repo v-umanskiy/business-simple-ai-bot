@@ -2,7 +2,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from mangum import Mangum
 
 from src.services.business_config_service import get_system_prompt
-from src.services.history_service import load_model_history, save_turn
+from src.services.history_service import load_model_history, prune_history, save_turn
 from src.services.secret_service import get_secret
 from src.services.text_generation_service import generate_reply
 
@@ -49,6 +49,7 @@ async def webhook(
     reply_text = await generate_reply(message_text, system_prompt, history)
     await save_turn(chat_key, "user", message_text)
     await save_turn(chat_key, "assistant", reply_text)
+    await prune_history(chat_key)
 
     return {
         "ok": True,

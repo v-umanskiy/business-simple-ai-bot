@@ -28,3 +28,8 @@ async def load_model_history(chat_key: str) -> list[dict]:
         history.append({"role": role, "text": text})
 
     return history
+
+
+async def prune_history(chat_key: str) -> int:
+    window_turns = int(os.getenv("WINDOW_TURNS", "30"))
+    return await history_repository.delete_older_turns(chat_key, window_turns)
