@@ -1,3 +1,6 @@
 fastapi
 mangum
 boto3
+openai
+google-genai
+google-api-core
