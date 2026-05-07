@@ -1,10 +1,8 @@
 from fastapi import FastAPI, Header, HTTPException, Request
 from mangum import Mangum
 
-from src.services.business_config_service import get_system_prompt
-from src.services.history_service import load_model_history, prune_history, save_turn
 from src.services.secret_service import get_secret
-from src.services.text_generation_service import generate_reply
+from src.services.bot_graph_service import run_bot_flow
 
 app = FastAPI()
 handler = Mangum(app)
@@ -35,25 +33,4 @@ async def webhook(
     if not message_text:
         raise HTTPException(status_code=400, detail="message_text is required")
 
-    system_prompt = get_system_prompt(business_id)
-    if not system_prompt:
-        return {
-            "ok": False,
-            "branch": "error",
-            "reply_text": "Business configuration was not found.",
-            "echo": payload,
-        }
-
-    chat_key = f"{business_id}#{user_id}"
-    history = await load_model_history(chat_key)
-    reply_text = await generate_reply(message_text, system_prompt, history)
-    await save_turn(chat_key, "user", message_text)
-    await save_turn(chat_key, "assistant", reply_text)
-    await prune_history(chat_key)
-
-    return {
-        "ok": True,
-        "branch": "reply_text",
-        "reply_text": reply_text,
-        "echo": payload,
-    }
+    return await run_bot_flow(payload)
