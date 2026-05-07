@@ -3,7 +3,9 @@ from typing import TypedDict, Any
 from langgraph.graph import StateGraph, END
 
 from src.services.business_config_service import get_system_prompt
+from src.services.business_knowledge_service import filter_sections, get_sections_map
 from src.services.history_service import load_model_history, prune_history, save_turn
+from src.services.knowledge_selection_service import decide_answer_or_sections
 from src.services.text_generation_service import generate_reply
 
 
@@ -13,7 +15,10 @@ class BotState(TypedDict, total=False):
     message_text: str
     payload: dict[str, Any]
     chat_key: str
+    base_system_prompt: str
     system_prompt: str
+    section_names: list[str]
+    sections_map: dict[str, str]
     history: list[dict]
     reply_text: str
     error: str
@@ -22,16 +27,23 @@ class BotState(TypedDict, total=False):
 async def _load_context(state: BotState) -> BotState:
     business_id = state["business_id"]
     user_id = state["user_id"]
+    message_text = state["message_text"]
 
     system_prompt = get_system_prompt(business_id)
     if not system_prompt:
         state["error"] = "Business configuration was not found."
         return state
 
+    sections_map = get_sections_map(business_id)
+    section_names = list(sections_map.keys())
+
     chat_key = f"{business_id}#{user_id}"
     history = await load_model_history(chat_key)
 
+    state["base_system_prompt"] = system_prompt
     state["system_prompt"] = system_prompt
+    state["section_names"] = section_names
+    state["sections_map"] = sections_map
     state["chat_key"] = chat_key
     state["history"] = history
     return state
@@ -41,12 +53,38 @@ async def _generate(state: BotState) -> BotState:
     if state.get("error"):
         return state
 
-    reply_text = await generate_reply(
-        state["message_text"],
-        state["system_prompt"],
+    message_text = state["message_text"]
+    base_system_prompt = state["base_system_prompt"]
+    section_names = state.get("section_names") or []
+    sections_map = state.get("sections_map") or {}
+
+    decision = await decide_answer_or_sections(
+        message_text=message_text,
+        base_system_prompt=base_system_prompt,
+        section_names=section_names,
+    )
+
+    mode = str(decision.get("mode") or "")
+    if mode == "answer":
+        state["reply_text"] = str(decision.get("answer") or "")
+        return state
+
+    selected_names = [str(name) for name in (decision.get("sections") or [])]
+    selected_sections = filter_sections(sections_map, selected_names)
+    blocks = [f"[{name}]\n{text}" for name, text in selected_sections.items()]
+    sections_text = "\n\n".join(blocks)
+    effective_system_prompt = (
+        f"{base_system_prompt}\n\n"
+        "Use the provided business knowledge sections as the primary source for factual answers. "
+        "If required information is missing in these sections, say that clearly.\n\n"
+        f"Provided knowledge sections:\n{sections_text}"
+    )
+
+    state["reply_text"] = await generate_reply(
+        message_text,
+        effective_system_prompt,
         state.get("history") or [],
     )
-    state["reply_text"] = reply_text
     return state
 
 
