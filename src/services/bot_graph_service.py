@@ -2,8 +2,9 @@ from typing import TypedDict, Any
 
 from langgraph.graph import StateGraph, END
 
-from src.services.business_config_service import get_system_prompt
+from src.services.business_config_service import get_business_config
 from src.services.business_knowledge_service import filter_sections, get_sections_map
+from src.services.handoff_message_service import resolve_handoff_message
 from src.services.history_service import load_model_history, prune_history, save_turn
 from src.services.knowledge_selection_service import decide_answer_or_sections
 from src.services.text_generation_service import generate_reply
@@ -15,12 +16,14 @@ class BotState(TypedDict, total=False):
     message_text: str
     payload: dict[str, Any]
     chat_key: str
+    business_config: dict[str, Any]
     base_system_prompt: str
     system_prompt: str
     section_names: list[str]
     sections_map: dict[str, str]
     history: list[dict]
     branch: str
+    lang: str
     reply_text: str
     error: str
 
@@ -30,8 +33,12 @@ async def _load_context(state: BotState) -> BotState:
     user_id = state["user_id"]
     message_text = state["message_text"]
 
-    system_prompt = get_system_prompt(business_id)
-    if not system_prompt:
+    business_config = get_business_config(business_id)
+    if not business_config:
+        state["error"] = "Business configuration was not found."
+        return state
+    system_prompt = business_config.get("system_prompt")
+    if not isinstance(system_prompt, str) or not system_prompt.strip():
         state["error"] = "Business configuration was not found."
         return state
 
@@ -41,6 +48,7 @@ async def _load_context(state: BotState) -> BotState:
     chat_key = f"{business_id}#{user_id}"
     history = await load_model_history(chat_key)
 
+    state["business_config"] = business_config
     state["base_system_prompt"] = system_prompt
     state["system_prompt"] = system_prompt
     state["section_names"] = section_names
@@ -69,10 +77,12 @@ async def _generate(state: BotState) -> BotState:
     if mode == "answer":
         state["branch"] = "reply_text"
         state["reply_text"] = str(decision.get("answer") or "")
+        state["lang"] = ""
         return state
     if mode == "handoff":
         state["branch"] = "handoff"
-        state["reply_text"] = ""
+        state["lang"] = str(decision.get("lang") or "en")
+        state["reply_text"] = resolve_handoff_message(state.get("business_config") or {}, state["lang"])
         return state
 
     selected_names = [str(name) for name in (decision.get("sections") or [])]
@@ -92,6 +102,7 @@ async def _generate(state: BotState) -> BotState:
         state.get("history") or [],
     )
     state["branch"] = "reply_text"
+    state["lang"] = ""
     return state
 
 
@@ -154,6 +165,7 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "ok": True,
         "branch": result.get("branch") or "reply_text",
+        "lang": result.get("lang") or "",
         "reply_text": result.get("reply_text") or "",
         "echo": payload,
     }

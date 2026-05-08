@@ -22,7 +22,10 @@ def _normalize_decision(payload: dict[str, Any], allowed: set[str]) -> dict[str,
         return {}
 
     if mode == "handoff":
-        return {"mode": "handoff"}
+        lang = payload.get("lang")
+        if isinstance(lang, str) and lang.strip():
+            return {"mode": "handoff", "lang": lang.strip().lower()}
+        return {"mode": "handoff", "lang": "en"}
 
     if mode == "request_sections":
         values = payload.get("sections")
@@ -46,9 +49,10 @@ async def decide_answer_or_sections(
         "You must decide one of three actions and return ONLY JSON.\n"
         "Action 1 (direct answer): {\"mode\":\"answer\",\"answer\":\"...\"}\n"
         "Action 2 (request sections): {\"mode\":\"request_sections\",\"sections\":[\"NAME\",\"NAME\"]}\n"
-        "Action 3 (handoff): {\"mode\":\"handoff\"}\n"
+        "Action 3 (handoff): {\"mode\":\"handoff\",\"lang\":\"...\"}\n"
         "If you need business details, request sections.\n"
         "Use handoff only when the user explicitly asks for a human operator or escalation.\n"
+        "For handoff, set lang to the user's language code (for example: de, en, es).\n"
         "Use only section names from the allowed list.\n\n"
         f"Allowed section names: {', '.join(section_names)}"
     )
@@ -67,7 +71,7 @@ async def decide_answer_or_sections(
         "Return ONLY valid JSON in one of these exact shapes:\n"
         "{\"mode\":\"answer\",\"answer\":\"...\"}\n"
         "{\"mode\":\"request_sections\",\"sections\":[\"NAME\",\"NAME\"]}\n"
-        "{\"mode\":\"handoff\"}\n"
+        "{\"mode\":\"handoff\",\"lang\":\"...\"}\n"
         f"Allowed section names: {', '.join(section_names)}"
     )
     repair_prompt = (
