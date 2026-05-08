@@ -20,6 +20,7 @@ class BotState(TypedDict, total=False):
     section_names: list[str]
     sections_map: dict[str, str]
     history: list[dict]
+    branch: str
     reply_text: str
     error: str
 
@@ -66,7 +67,12 @@ async def _generate(state: BotState) -> BotState:
 
     mode = str(decision.get("mode") or "")
     if mode == "answer":
+        state["branch"] = "reply_text"
         state["reply_text"] = str(decision.get("answer") or "")
+        return state
+    if mode == "handoff":
+        state["branch"] = "handoff"
+        state["reply_text"] = ""
         return state
 
     selected_names = [str(name) for name in (decision.get("sections") or [])]
@@ -85,6 +91,7 @@ async def _generate(state: BotState) -> BotState:
         effective_system_prompt,
         state.get("history") or [],
     )
+    state["branch"] = "reply_text"
     return state
 
 
@@ -146,7 +153,7 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "ok": True,
-        "branch": "reply_text",
+        "branch": result.get("branch") or "reply_text",
         "reply_text": result.get("reply_text") or "",
         "echo": payload,
     }
