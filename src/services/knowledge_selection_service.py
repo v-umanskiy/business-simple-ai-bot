@@ -65,6 +65,7 @@ async def decide_answer_or_sections(
     base_system_prompt: str,
     section_names: list[str],
     image_ids: list[str],
+    history: list[dict] | None = None,
 ) -> dict[str, Any]:
     allowed = set(section_names)
     allowed_images = set(image_ids)
@@ -87,7 +88,7 @@ async def decide_answer_or_sections(
     raw = await provider.generate_reply(
         prompt=message_text,
         system_prompt=selector_system,
-        history=[],
+        history=history or [],
     )
     decision = _normalize_decision(parse_mode_response(raw), allowed, allowed_images)
     if decision:
@@ -108,7 +109,7 @@ async def decide_answer_or_sections(
     repaired_raw = await provider.generate_reply(
         prompt=repair_prompt,
         system_prompt=repair_system,
-        history=[],
+        history=history or [],
     )
     repaired_decision = _normalize_decision(parse_mode_response(repaired_raw), allowed, allowed_images)
     if repaired_decision:

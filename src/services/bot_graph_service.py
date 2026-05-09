@@ -74,12 +74,14 @@ async def _generate(state: BotState) -> BotState:
     base_system_prompt = state["base_system_prompt"]
     section_names = state.get("section_names") or []
     image_ids = state.get("image_ids") or []
+    history = state.get("history") or []
 
     decision = await decide_answer_or_sections(
         message_text=message_text,
         base_system_prompt=base_system_prompt,
         section_names=section_names,
         image_ids=image_ids,
+        history=history,
     )
 
     mode = str(decision.get("mode") or "")
