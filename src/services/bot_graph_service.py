@@ -3,7 +3,8 @@ from typing import TypedDict, Any
 from langgraph.graph import StateGraph, END
 
 from src.services.business_config_service import get_business_config
-from src.services.business_knowledge_service import filter_sections, get_sections_map
+from src.services.business_image_catalog_service import get_image_url_map
+from src.services.business_knowledge_sections_service import filter_sections, get_sections_map
 from src.services.handoff_message_service import resolve_handoff_message
 from src.services.history_service import load_model_history, prune_history, save_turn
 from src.services.knowledge_selection_service import decide_answer_or_sections
@@ -20,6 +21,9 @@ class BotState(TypedDict, total=False):
     base_system_prompt: str
     system_prompt: str
     section_names: list[str]
+    image_ids: list[str]
+    image_url_map: dict[str, str]
+    image_urls: list[str]
     sections_map: dict[str, str]
     history: list[dict]
     branch: str
@@ -44,6 +48,8 @@ async def _load_context(state: BotState) -> BotState:
 
     sections_map = get_sections_map(business_id)
     section_names = list(sections_map.keys())
+    image_url_map = get_image_url_map(business_id)
+    image_ids = list(image_url_map.keys())
 
     chat_key = f"{business_id}#{user_id}"
     history = await load_model_history(chat_key)
@@ -52,6 +58,9 @@ async def _load_context(state: BotState) -> BotState:
     state["base_system_prompt"] = system_prompt
     state["system_prompt"] = system_prompt
     state["section_names"] = section_names
+    state["image_ids"] = image_ids
+    state["image_url_map"] = image_url_map
+    state["image_urls"] = []
     state["sections_map"] = sections_map
     state["chat_key"] = chat_key
     state["history"] = history
@@ -65,12 +74,14 @@ async def _generate(state: BotState) -> BotState:
     message_text = state["message_text"]
     base_system_prompt = state["base_system_prompt"]
     section_names = state.get("section_names") or []
+    image_ids = state.get("image_ids") or []
     sections_map = state.get("sections_map") or {}
 
     decision = await decide_answer_or_sections(
         message_text=message_text,
         base_system_prompt=base_system_prompt,
         section_names=section_names,
+        image_ids=image_ids,
     )
 
     mode = str(decision.get("mode") or "")
@@ -78,6 +89,10 @@ async def _generate(state: BotState) -> BotState:
         state["branch"] = "reply_text"
         state["reply_text"] = str(decision.get("answer") or "")
         state["lang"] = ""
+        selected_image_ids = [str(x) for x in (decision.get("image_ids") or [])]
+        state["image_ids"] = selected_image_ids
+        image_url_map = state.get("image_url_map") or {}
+        state["image_urls"] = [image_url_map[image_id] for image_id in selected_image_ids if image_id in image_url_map]
         return state
     if mode == "handoff":
         state["branch"] = "handoff"
@@ -159,13 +174,27 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
             "ok": False,
             "branch": "error",
             "reply_text": result["error"],
+            "number_images": 0,
+            "image_url_1": "",
+            "image_url_2": "",
+            "image_url_3": "",
             "echo": payload,
         }
+
+    image_urls = list(result.get("image_urls") or [])
+    number_images = len(image_urls)
+    image_url_1 = image_urls[0] if number_images >= 1 else ""
+    image_url_2 = image_urls[1] if number_images >= 2 else ""
+    image_url_3 = image_urls[2] if number_images >= 3 else ""
 
     return {
         "ok": True,
         "branch": result.get("branch") or "reply_text",
         "lang": result.get("lang") or "",
         "reply_text": result.get("reply_text") or "",
+        "number_images": number_images,
+        "image_url_1": image_url_1,
+        "image_url_2": image_url_2,
+        "image_url_3": image_url_3,
         "echo": payload,
     }
