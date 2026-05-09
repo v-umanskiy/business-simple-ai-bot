@@ -77,6 +77,7 @@ async def decide_answer_or_sections(
         "If you need business details, request sections.\n"
         "Use handoff only when the user explicitly asks for a human operator or escalation.\n"
         "For handoff, set lang to the user's language code (for example: de, en, es).\n"
+        "If relevant images are available, include image_ids in answer mode.\n"
         "Use only section names from the allowed list.\n\n"
         f"Allowed section names: {', '.join(section_names)}\n"
         f"Allowed image IDs (optional for answer mode, max 3): {', '.join(image_ids)}"
