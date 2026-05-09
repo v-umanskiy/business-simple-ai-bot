@@ -4,7 +4,11 @@ from langgraph.graph import StateGraph, END
 
 from src.services.business_config_service import get_business_config
 from src.services.business_image_catalog_service import get_image_url_map
-from src.services.business_knowledge_sections_service import filter_sections, get_sections_map
+from src.services.business_knowledge_sections_service import (
+    filter_sections,
+    get_section_names,
+    get_sections_map_by_names,
+)
 from src.services.handoff_message_service import resolve_handoff_message
 from src.services.history_service import load_model_history, prune_history, save_turn
 from src.services.knowledge_selection_service import decide_answer_or_sections
@@ -24,7 +28,6 @@ class BotState(TypedDict, total=False):
     image_ids: list[str]
     image_url_map: dict[str, str]
     image_urls: list[str]
-    sections_map: dict[str, str]
     history: list[dict]
     branch: str
     lang: str
@@ -35,8 +38,6 @@ class BotState(TypedDict, total=False):
 async def _load_context(state: BotState) -> BotState:
     business_id = state["business_id"]
     user_id = state["user_id"]
-    message_text = state["message_text"]
-
     business_config = get_business_config(business_id)
     if not business_config:
         state["error"] = "Business configuration was not found."
@@ -46,8 +47,7 @@ async def _load_context(state: BotState) -> BotState:
         state["error"] = "Business configuration was not found."
         return state
 
-    sections_map = get_sections_map(business_id)
-    section_names = list(sections_map.keys())
+    section_names = get_section_names(business_id)
     image_url_map = get_image_url_map(business_id)
     image_ids = list(image_url_map.keys())
 
@@ -61,7 +61,6 @@ async def _load_context(state: BotState) -> BotState:
     state["image_ids"] = image_ids
     state["image_url_map"] = image_url_map
     state["image_urls"] = []
-    state["sections_map"] = sections_map
     state["chat_key"] = chat_key
     state["history"] = history
     return state
@@ -75,7 +74,6 @@ async def _generate(state: BotState) -> BotState:
     base_system_prompt = state["base_system_prompt"]
     section_names = state.get("section_names") or []
     image_ids = state.get("image_ids") or []
-    sections_map = state.get("sections_map") or {}
 
     decision = await decide_answer_or_sections(
         message_text=message_text,
@@ -101,6 +99,7 @@ async def _generate(state: BotState) -> BotState:
         return state
 
     selected_names = [str(name) for name in (decision.get("sections") or [])]
+    sections_map = get_sections_map_by_names(state["business_id"], selected_names)
     selected_sections = filter_sections(sections_map, selected_names)
     blocks = [f"[{name}]\n{text}" for name, text in selected_sections.items()]
     sections_text = "\n\n".join(blocks)
