@@ -1,8 +1,18 @@
+import logging
+import os
+
 from fastapi import FastAPI, Header, HTTPException, Request
 from mangum import Mangum
 
 from src.services.secret_service import get_secret
 from src.services.bot_graph_service import run_bot_flow
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+logging.basicConfig(
+    level=LOG_LEVEL,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
+logging.getLogger().setLevel(LOG_LEVEL)
 
 app = FastAPI()
 handler = Mangum(app)

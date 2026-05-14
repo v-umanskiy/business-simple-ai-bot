@@ -1,3 +1,4 @@
+import logging
 from typing import TypedDict, Any
 
 from langgraph.graph import StateGraph, END
@@ -13,6 +14,8 @@ from src.services.handoff_message_service import resolve_handoff_message
 from src.services.history_service import load_model_history, prune_history, save_turn
 from src.services.knowledge_selection_service import decide_answer_or_sections
 from src.services.text_generation_service import generate_reply
+
+logger = logging.getLogger(__name__)
 
 
 class BotState(TypedDict, total=False):
@@ -35,15 +38,33 @@ class BotState(TypedDict, total=False):
     error: str
 
 
+def _preview(value: Any, *, max_length: int = 1200) -> str:
+    text = str(value or "")
+    text = text.replace("\n", "\\n").replace("\r", "\\r")
+    if len(text) <= max_length:
+        return text
+    return f"{text[:max_length]}..."
+
+
 async def _load_context(state: BotState) -> BotState:
     business_id = state["business_id"]
     user_id = state["user_id"]
     business_config = get_business_config(business_id)
     if not business_config:
+        logger.warning(
+            "Bot context load failed business_id=%s user_id=%s reason=missing_business_config",
+            business_id,
+            user_id,
+        )
         state["error"] = "Business configuration was not found."
         return state
     system_prompt = business_config.get("system_prompt")
     if not isinstance(system_prompt, str) or not system_prompt.strip():
+        logger.warning(
+            "Bot context load failed business_id=%s user_id=%s reason=missing_system_prompt",
+            business_id,
+            user_id,
+        )
         state["error"] = "Business configuration was not found."
         return state
 
@@ -63,6 +84,14 @@ async def _load_context(state: BotState) -> BotState:
     state["image_urls"] = []
     state["chat_key"] = chat_key
     state["history"] = history
+    logger.info(
+        "Bot context loaded business_id=%s user_id=%s knowledge_sections=%s image_ids=%s history_turns=%s",
+        business_id,
+        user_id,
+        section_names,
+        image_ids,
+        len(history),
+    )
     return state
 
 
@@ -93,14 +122,34 @@ async def _generate(state: BotState) -> BotState:
         state["image_ids"] = selected_image_ids
         image_url_map = state.get("image_url_map") or {}
         state["image_urls"] = [image_url_map[image_id] for image_id in selected_image_ids if image_id in image_url_map]
+        logger.info(
+            "AI decision business_id=%s user_id=%s mode=answer image_ids=%s answer=%s",
+            state["business_id"],
+            state["user_id"],
+            selected_image_ids,
+            _preview(state["reply_text"]),
+        )
         return state
     if mode == "handoff":
         state["branch"] = "handoff"
         state["lang"] = str(decision.get("lang") or "en")
         state["reply_text"] = resolve_handoff_message(state.get("business_config") or {}, state["lang"])
+        logger.info(
+            "AI decision business_id=%s user_id=%s mode=handoff lang=%s answer=%s",
+            state["business_id"],
+            state["user_id"],
+            state["lang"],
+            _preview(state["reply_text"]),
+        )
         return state
 
     selected_names = [str(name) for name in (decision.get("sections") or [])]
+    logger.info(
+        "AI decision business_id=%s user_id=%s mode=request_sections knowledge_sections=%s",
+        state["business_id"],
+        state["user_id"],
+        selected_names,
+    )
     sections_map = get_sections_map_by_names(state["business_id"], selected_names)
     selected_sections = filter_sections(sections_map, selected_names)
     blocks = [f"[{name}]\n{text}" for name, text in selected_sections.items()]
@@ -119,6 +168,13 @@ async def _generate(state: BotState) -> BotState:
     )
     state["branch"] = "reply_text"
     state["lang"] = ""
+    logger.info(
+        "AI answer business_id=%s user_id=%s knowledge_sections=%s answer=%s",
+        state["business_id"],
+        state["user_id"],
+        list(selected_sections.keys()),
+        _preview(state["reply_text"]),
+    )
     return state
 
 
@@ -168,9 +224,22 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
         "payload": payload,
     }
 
+    logger.info(
+        "Received message business_id=%s user_id=%s message=%s",
+        state["business_id"],
+        state["user_id"],
+        _preview(state["message_text"]),
+    )
+
     result = await get_graph().ainvoke(state)
 
     if result.get("error"):
+        logger.warning(
+            "Bot flow failed business_id=%s user_id=%s error=%s",
+            state["business_id"],
+            state["user_id"],
+            result["error"],
+        )
         return {
             "ok": False,
             "branch": "error",
