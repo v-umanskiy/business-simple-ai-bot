@@ -1,5 +1,6 @@
 import logging
 
+from src.services.reply_format_service import normalize_plain_text_reply
 from src.services.text_generation_service import generate_reply
 
 logger = logging.getLogger(__name__)
@@ -50,4 +51,4 @@ async def ensure_reply_length(
         ),
         [],
     )
-    return truncate_reply(shortened, max_reply_chars)
+    return truncate_reply(normalize_plain_text_reply(shortened), max_reply_chars)

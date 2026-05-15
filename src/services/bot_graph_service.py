@@ -14,6 +14,7 @@ from src.services.channel_policy_service import resolve_channel_policy
 from src.services.handoff_message_service import resolve_handoff_message
 from src.services.history_service import load_model_history, prune_history, save_turn
 from src.services.knowledge_selection_service import decide_answer_or_sections
+from src.services.reply_format_service import normalize_plain_text_reply
 from src.services.reply_length_service import (
     add_reply_limit_instruction,
     ensure_reply_length,
@@ -126,7 +127,7 @@ async def _generate(state: BotState) -> BotState:
     mode = str(decision.get("mode") or "")
     if mode == "answer":
         state["branch"] = "reply_text"
-        state["reply_text"] = str(decision.get("answer") or "")
+        state["reply_text"] = normalize_plain_text_reply(str(decision.get("answer") or ""))
         state["reply_text"] = await ensure_reply_length(
             business_id=state["business_id"],
             user_id=state["user_id"],
@@ -151,6 +152,7 @@ async def _generate(state: BotState) -> BotState:
         state["branch"] = "handoff"
         state["lang"] = str(decision.get("lang") or "en")
         state["reply_text"] = resolve_handoff_message(state.get("business_config") or {}, state["lang"])
+        state["reply_text"] = normalize_plain_text_reply(state["reply_text"])
         state["reply_text"] = truncate_reply(state["reply_text"], state["max_reply_chars"])
         logger.info(
             "AI decision business_id=%s user_id=%s mode=handoff lang=%s answer=%s",
@@ -184,6 +186,7 @@ async def _generate(state: BotState) -> BotState:
         effective_system_prompt,
         state.get("history") or [],
     )
+    state["reply_text"] = normalize_plain_text_reply(state["reply_text"])
     state["reply_text"] = await ensure_reply_length(
         business_id=state["business_id"],
         user_id=state["user_id"],
