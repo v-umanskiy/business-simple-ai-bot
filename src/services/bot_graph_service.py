@@ -127,7 +127,14 @@ async def _generate(state: BotState) -> BotState:
     mode = str(decision.get("mode") or "")
     if mode == "answer":
         state["branch"] = "reply_text"
-        state["reply_text"] = normalize_plain_text_reply(str(decision.get("answer") or ""))
+        raw_reply_text = str(decision.get("answer") or "")
+        logger.info(
+            "AI raw answer business_id=%s user_id=%s mode=answer answer=%s",
+            state["business_id"],
+            state["user_id"],
+            _preview(raw_reply_text),
+        )
+        state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
         state["reply_text"] = await ensure_reply_length(
             business_id=state["business_id"],
             user_id=state["user_id"],
@@ -151,8 +158,14 @@ async def _generate(state: BotState) -> BotState:
     if mode == "handoff":
         state["branch"] = "handoff"
         state["lang"] = str(decision.get("lang") or "en")
-        state["reply_text"] = resolve_handoff_message(state.get("business_config") or {}, state["lang"])
-        state["reply_text"] = normalize_plain_text_reply(state["reply_text"])
+        raw_reply_text = resolve_handoff_message(state.get("business_config") or {}, state["lang"])
+        logger.info(
+            "AI raw answer business_id=%s user_id=%s mode=handoff answer=%s",
+            state["business_id"],
+            state["user_id"],
+            _preview(raw_reply_text),
+        )
+        state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
         state["reply_text"] = truncate_reply(state["reply_text"], state["max_reply_chars"])
         logger.info(
             "AI decision business_id=%s user_id=%s mode=handoff lang=%s answer=%s",
@@ -181,12 +194,19 @@ async def _generate(state: BotState) -> BotState:
         f"Provided knowledge sections:\n{sections_text}"
     )
 
-    state["reply_text"] = await generate_reply(
+    raw_reply_text = await generate_reply(
         message_text,
         effective_system_prompt,
         state.get("history") or [],
     )
-    state["reply_text"] = normalize_plain_text_reply(state["reply_text"])
+    logger.info(
+        "AI raw answer business_id=%s user_id=%s knowledge_sections=%s answer=%s",
+        state["business_id"],
+        state["user_id"],
+        list(selected_sections.keys()),
+        _preview(raw_reply_text),
+    )
+    state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
     state["reply_text"] = await ensure_reply_length(
         business_id=state["business_id"],
         user_id=state["user_id"],
