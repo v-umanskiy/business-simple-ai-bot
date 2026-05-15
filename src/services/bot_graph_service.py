@@ -10,9 +10,15 @@ from src.services.business_knowledge_sections_service import (
     get_section_names,
     get_sections_map_by_names,
 )
+from src.services.channel_policy_service import resolve_channel_policy
 from src.services.handoff_message_service import resolve_handoff_message
 from src.services.history_service import load_model_history, prune_history, save_turn
 from src.services.knowledge_selection_service import decide_answer_or_sections
+from src.services.reply_length_service import (
+    add_reply_limit_instruction,
+    ensure_reply_length,
+    truncate_reply,
+)
 from src.services.text_generation_service import generate_reply
 
 logger = logging.getLogger(__name__)
@@ -22,6 +28,8 @@ class BotState(TypedDict, total=False):
     business_id: str
     user_id: str
     message_text: str
+    channel: str
+    max_reply_chars: int
     payload: dict[str, Any]
     chat_key: str
     business_config: dict[str, Any]
@@ -76,8 +84,8 @@ async def _load_context(state: BotState) -> BotState:
     history = await load_model_history(chat_key)
 
     state["business_config"] = business_config
-    state["base_system_prompt"] = system_prompt
-    state["system_prompt"] = system_prompt
+    state["base_system_prompt"] = add_reply_limit_instruction(system_prompt, state["max_reply_chars"])
+    state["system_prompt"] = state["base_system_prompt"]
     state["section_names"] = section_names
     state["image_ids"] = image_ids
     state["image_url_map"] = image_url_map
@@ -85,9 +93,11 @@ async def _load_context(state: BotState) -> BotState:
     state["chat_key"] = chat_key
     state["history"] = history
     logger.info(
-        "Bot context loaded business_id=%s user_id=%s knowledge_sections=%s image_ids=%s history_turns=%s",
+        "Bot context loaded business_id=%s user_id=%s channel=%s max_reply_chars=%s knowledge_sections=%s image_ids=%s history_turns=%s",
         business_id,
         user_id,
+        state["channel"],
+        state["max_reply_chars"],
         section_names,
         image_ids,
         len(history),
@@ -117,6 +127,13 @@ async def _generate(state: BotState) -> BotState:
     if mode == "answer":
         state["branch"] = "reply_text"
         state["reply_text"] = str(decision.get("answer") or "")
+        state["reply_text"] = await ensure_reply_length(
+            business_id=state["business_id"],
+            user_id=state["user_id"],
+            message_text=message_text,
+            reply_text=state["reply_text"],
+            max_reply_chars=state["max_reply_chars"],
+        )
         state["lang"] = ""
         selected_image_ids = [str(x) for x in (decision.get("image_ids") or [])]
         state["image_ids"] = selected_image_ids
@@ -134,6 +151,7 @@ async def _generate(state: BotState) -> BotState:
         state["branch"] = "handoff"
         state["lang"] = str(decision.get("lang") or "en")
         state["reply_text"] = resolve_handoff_message(state.get("business_config") or {}, state["lang"])
+        state["reply_text"] = truncate_reply(state["reply_text"], state["max_reply_chars"])
         logger.info(
             "AI decision business_id=%s user_id=%s mode=handoff lang=%s answer=%s",
             state["business_id"],
@@ -165,6 +183,13 @@ async def _generate(state: BotState) -> BotState:
         message_text,
         effective_system_prompt,
         state.get("history") or [],
+    )
+    state["reply_text"] = await ensure_reply_length(
+        business_id=state["business_id"],
+        user_id=state["user_id"],
+        message_text=message_text,
+        reply_text=state["reply_text"],
+        max_reply_chars=state["max_reply_chars"],
     )
     state["branch"] = "reply_text"
     state["lang"] = ""
@@ -217,17 +242,31 @@ def get_graph():
 
 
 async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
+    channel_policy = resolve_channel_policy(payload)
     state: BotState = {
         "business_id": str(payload.get("business_id") or ""),
         "user_id": str(payload.get("user_id") or ""),
         "message_text": str(payload.get("message_text") or ""),
+        "channel": channel_policy.channel,
+        "max_reply_chars": channel_policy.max_reply_chars,
         "payload": payload,
     }
 
+    if channel_policy.used_default:
+        logger.warning(
+            "Unknown channel received business_id=%s user_id=%s raw_channel=%s fallback_channel=%s",
+            state["business_id"],
+            state["user_id"],
+            channel_policy.raw_channel,
+            channel_policy.channel,
+        )
+
     logger.info(
-        "Received message business_id=%s user_id=%s message=%s",
+        "Received message business_id=%s user_id=%s channel=%s max_reply_chars=%s message=%s",
         state["business_id"],
         state["user_id"],
+        state["channel"],
+        state["max_reply_chars"],
         _preview(state["message_text"]),
     )
 
@@ -243,6 +282,8 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
         return {
             "ok": False,
             "branch": "error",
+            "channel": state["channel"],
+            "max_reply_chars": state["max_reply_chars"],
             "reply_text": result["error"],
             "number_images": 0,
             "image_url_1": "",
@@ -260,6 +301,8 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
     return {
         "ok": True,
         "branch": result.get("branch") or "reply_text",
+        "channel": result.get("channel") or state["channel"],
+        "max_reply_chars": result.get("max_reply_chars") or state["max_reply_chars"],
         "lang": result.get("lang") or "",
         "reply_text": result.get("reply_text") or "",
         "number_images": number_images,
