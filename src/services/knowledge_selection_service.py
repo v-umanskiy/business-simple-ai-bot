@@ -77,6 +77,7 @@ async def decide_answer_or_sections(
         "Action 3 (handoff): {\"mode\":\"handoff\",\"lang\":\"...\"}\n"
         "If you need business details, request sections.\n"
         "For a direct answer to a user always use the same language that as the user used in their question."
+        "Do not use markdown (e.g. **). You can use only plain text options if needed, e.g. dashes for markers."
         "Use handoff only when the user explicitly asks for a human operator or escalation.\n"
         "For handoff, set lang to the user's language code (for example: de, en, es).\n"
         "If relevant images are available, include image_ids in answer mode.\n"
