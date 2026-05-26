@@ -19,24 +19,33 @@ def truncate_reply(reply_text: str, max_reply_chars: int) -> str:
     return f"{reply_text[: max_reply_chars - 3]}..."
 
 
-async def ensure_reply_length(
+def validate_reply_length(
     *,
     business_id: str,
     user_id: str,
+    reply_text: str,
+    max_reply_chars: int,
+) -> bool:
+    is_valid = len(reply_text) <= max_reply_chars
+    if not is_valid:
+        logger.warning(
+            "AI answer exceeded channel limit business_id=%s user_id=%s answer_chars=%s max_reply_chars=%s",
+            business_id,
+            user_id,
+            len(reply_text),
+            max_reply_chars,
+        )
+    return is_valid
+
+
+async def shorten_reply(
+    *,
     message_text: str,
     reply_text: str,
     max_reply_chars: int,
 ) -> str:
     if len(reply_text) <= max_reply_chars:
         return reply_text
-
-    logger.warning(
-        "AI answer exceeded channel limit business_id=%s user_id=%s answer_chars=%s max_reply_chars=%s",
-        business_id,
-        user_id,
-        len(reply_text),
-        max_reply_chars,
-    )
 
     shortened = await generate_reply(
         (
@@ -51,4 +60,54 @@ async def ensure_reply_length(
         ),
         [],
     )
-    return truncate_reply(normalize_plain_text_reply(shortened), max_reply_chars)
+    return normalize_plain_text_reply(shortened)
+
+
+async def repair_reply_length(
+    *,
+    business_id: str,
+    user_id: str,
+    retry_count: int,
+    message_text: str,
+    reply_text: str,
+    max_reply_chars: int,
+) -> str:
+    logger.info(
+        "AI answer length repair started business_id=%s user_id=%s retry_count=%s answer_chars=%s max_reply_chars=%s",
+        business_id,
+        user_id,
+        retry_count,
+        len(reply_text),
+        max_reply_chars,
+    )
+    shortened = await shorten_reply(
+        message_text=message_text,
+        reply_text=reply_text,
+        max_reply_chars=max_reply_chars,
+    )
+    logger.info(
+        "AI answer length repair finished business_id=%s user_id=%s retry_count=%s answer_chars=%s max_reply_chars=%s",
+        business_id,
+        user_id,
+        retry_count,
+        len(shortened),
+        max_reply_chars,
+    )
+    return shortened
+
+
+def truncate_reply_after_length_repair(
+    *,
+    business_id: str,
+    user_id: str,
+    reply_text: str,
+    max_reply_chars: int,
+) -> str:
+    logger.warning(
+        "AI answer truncated after length repair business_id=%s user_id=%s answer_chars=%s max_reply_chars=%s",
+        business_id,
+        user_id,
+        len(reply_text),
+        max_reply_chars,
+    )
+    return truncate_reply(reply_text, max_reply_chars)

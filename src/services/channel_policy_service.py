@@ -3,9 +3,9 @@ from typing import Any
 
 
 CHANNEL_REPLY_LIMITS = {
-    "widget": 1850,
-    "telegram": 1850,
-    "whatsapp": 450,
+    "widget": 1000,
+    "telegram": 1000,
+    "whatsapp": 500,
 }
 DEFAULT_CHANNEL = "widget"
 

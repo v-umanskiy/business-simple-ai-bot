@@ -17,8 +17,10 @@ from src.services.knowledge_selection_service import decide_answer_or_sections
 from src.services.reply_format_service import normalize_plain_text_reply
 from src.services.reply_length_service import (
     add_reply_limit_instruction,
-    ensure_reply_length,
+    repair_reply_length,
     truncate_reply,
+    truncate_reply_after_length_repair,
+    validate_reply_length,
 )
 from src.services.text_generation_service import generate_reply
 
@@ -44,6 +46,8 @@ class BotState(TypedDict, total=False):
     branch: str
     lang: str
     reply_text: str
+    length_retry_count: int
+    length_valid: bool
     error: str
 
 
@@ -135,13 +139,6 @@ async def _generate(state: BotState) -> BotState:
             _preview(raw_reply_text),
         )
         state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
-        state["reply_text"] = await ensure_reply_length(
-            business_id=state["business_id"],
-            user_id=state["user_id"],
-            message_text=message_text,
-            reply_text=state["reply_text"],
-            max_reply_chars=state["max_reply_chars"],
-        )
         state["lang"] = ""
         selected_image_ids = [str(x) for x in (decision.get("image_ids") or [])]
         state["image_ids"] = selected_image_ids
@@ -207,13 +204,6 @@ async def _generate(state: BotState) -> BotState:
         _preview(raw_reply_text),
     )
     state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
-    state["reply_text"] = await ensure_reply_length(
-        business_id=state["business_id"],
-        user_id=state["user_id"],
-        message_text=message_text,
-        reply_text=state["reply_text"],
-        max_reply_chars=state["max_reply_chars"],
-    )
     state["branch"] = "reply_text"
     state["lang"] = ""
     logger.info(
@@ -224,6 +214,57 @@ async def _generate(state: BotState) -> BotState:
         _preview(state["reply_text"]),
     )
     return state
+
+
+async def _validate_length(state: BotState) -> BotState:
+    if state.get("error"):
+        return state
+
+    state["length_valid"] = validate_reply_length(
+        business_id=state["business_id"],
+        user_id=state["user_id"],
+        reply_text=state.get("reply_text") or "",
+        max_reply_chars=state["max_reply_chars"],
+    )
+    return state
+
+
+async def _repair_length(state: BotState) -> BotState:
+    if state.get("error"):
+        return state
+
+    state["length_retry_count"] = state.get("length_retry_count", 0) + 1
+    state["reply_text"] = await repair_reply_length(
+        business_id=state["business_id"],
+        user_id=state["user_id"],
+        retry_count=state["length_retry_count"],
+        message_text=state["message_text"],
+        reply_text=state.get("reply_text") or "",
+        max_reply_chars=state["max_reply_chars"],
+    )
+    return state
+
+
+async def _truncate_length(state: BotState) -> BotState:
+    if state.get("error"):
+        return state
+
+    state["reply_text"] = truncate_reply_after_length_repair(
+        business_id=state["business_id"],
+        user_id=state["user_id"],
+        reply_text=state.get("reply_text") or "",
+        max_reply_chars=state["max_reply_chars"],
+    )
+    state["length_valid"] = True
+    return state
+
+
+def _route_after_length_validation(state: BotState) -> str:
+    if state.get("error") or state.get("length_valid"):
+        return "persist"
+    if state.get("length_retry_count", 0) < 1:
+        return "repair_length"
+    return "truncate_length"
 
 
 async def _persist(state: BotState) -> BotState:
@@ -247,11 +288,25 @@ def _build_graph():
     graph = StateGraph(BotState)
     graph.add_node("load_context", _load_context)
     graph.add_node("generate", _generate)
+    graph.add_node("validate_length", _validate_length)
+    graph.add_node("repair_length", _repair_length)
+    graph.add_node("truncate_length", _truncate_length)
     graph.add_node("persist", _persist)
 
     graph.set_entry_point("load_context")
     graph.add_edge("load_context", "generate")
-    graph.add_edge("generate", "persist")
+    graph.add_edge("generate", "validate_length")
+    graph.add_conditional_edges(
+        "validate_length",
+        _route_after_length_validation,
+        {
+            "persist": "persist",
+            "repair_length": "repair_length",
+            "truncate_length": "truncate_length",
+        },
+    )
+    graph.add_edge("repair_length", "validate_length")
+    graph.add_edge("truncate_length", "persist")
     graph.add_edge("persist", END)
 
     return graph.compile()
@@ -273,6 +328,7 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
         "channel": channel_policy.channel,
         "max_reply_chars": channel_policy.max_reply_chars,
         "payload": payload,
+        "length_retry_count": 0,
     }
 
     if channel_policy.used_default:
