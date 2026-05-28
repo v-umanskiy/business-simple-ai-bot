@@ -1,7 +1,10 @@
 import json
+import logging
 from typing import Any
 
 from src.ai.model_provider import get_model_provider
+
+logger = logging.getLogger(__name__)
 
 
 def parse_mode_response(raw: str) -> dict[str, Any]:
@@ -11,6 +14,28 @@ def parse_mode_response(raw: str) -> dict[str, Any]:
     except Exception:
         return {}
     return payload if isinstance(payload, dict) else {}
+
+
+def _preview(value: Any, *, max_length: int) -> str:
+    text = str(value or "")
+    text = text.replace("\n", "\\n").replace("\r", "\\r")
+    if len(text) <= max_length:
+        return text
+    return f"{text[:max_length]}..."
+
+
+def _history_preview(history: list[dict] | None) -> list[dict]:
+    preview: list[dict] = []
+    for turn in history or []:
+        role = turn.get("role")
+        text = turn.get("text")
+        preview.append(
+            {
+                "role": role if isinstance(role, str) else "",
+                "text": _preview(text, max_length=120),
+            }
+        )
+    return preview
 
 
 def _normalize_decision(
@@ -107,6 +132,13 @@ async def decide_answer_or_sections(
     )
 
     provider = get_model_provider()
+    logger.info(
+        "LLM selector prompt system_prompt=%s history_turns=%s history_preview=%s user_prompt=%s",
+        _preview(selector_system, max_length=8000),
+        len(history or []),
+        _history_preview(history),
+        _preview(message_text, max_length=4000),
+    )
     raw = await provider.generate_reply(
         prompt=message_text,
         system_prompt=selector_system,
@@ -127,6 +159,13 @@ async def decide_answer_or_sections(
     repair_prompt = (
         "The previous output was invalid. Reformat it to valid JSON only.\n\n"
         f"Previous output:\n{raw}"
+    )
+    logger.info(
+        "LLM selector repair prompt system_prompt=%s history_turns=%s history_preview=%s user_prompt=%s",
+        _preview(repair_system, max_length=8000),
+        len(history or []),
+        _history_preview(history),
+        _preview(repair_prompt, max_length=4000),
     )
     repaired_raw = await provider.generate_reply(
         prompt=repair_prompt,
