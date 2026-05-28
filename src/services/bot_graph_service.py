@@ -7,8 +7,9 @@ from src.services.business_config_service import get_business_config
 from src.services.business_image_catalog_service import get_image_url_map
 from src.services.business_knowledge_sections_service import (
     filter_sections,
-    get_section_names,
-    get_sections_map_by_names,
+    get_section_options,
+    get_sections_map_by_ids,
+    map_section_ids_by_numbers,
 )
 from src.services.channel_policy_service import resolve_channel_policy
 from src.services.handoff_message_service import resolve_handoff_message
@@ -38,7 +39,7 @@ class BotState(TypedDict, total=False):
     business_config: dict[str, Any]
     base_system_prompt: str
     system_prompt: str
-    section_names: list[str]
+    section_options: list[dict]
     image_ids: list[str]
     image_url_map: dict[str, str]
     image_urls: list[str]
@@ -81,7 +82,7 @@ async def _load_context(state: BotState) -> BotState:
         state["error"] = "Business configuration was not found."
         return state
 
-    section_names = get_section_names(business_id)
+    section_options = get_section_options(business_id)
     image_url_map = get_image_url_map(business_id)
     image_ids = list(image_url_map.keys())
 
@@ -91,7 +92,7 @@ async def _load_context(state: BotState) -> BotState:
     state["business_config"] = business_config
     state["base_system_prompt"] = add_reply_limit_instruction(system_prompt, state["max_reply_chars"])
     state["system_prompt"] = state["base_system_prompt"]
-    state["section_names"] = section_names
+    state["section_options"] = section_options
     state["image_ids"] = image_ids
     state["image_url_map"] = image_url_map
     state["image_urls"] = []
@@ -103,7 +104,7 @@ async def _load_context(state: BotState) -> BotState:
         user_id,
         state["channel"],
         state["max_reply_chars"],
-        section_names,
+        [option.get("title") for option in section_options],
         image_ids,
         len(history),
     )
@@ -116,14 +117,14 @@ async def _generate(state: BotState) -> BotState:
 
     message_text = state["message_text"]
     base_system_prompt = state["base_system_prompt"]
-    section_names = state.get("section_names") or []
+    section_options = state.get("section_options") or []
     image_ids = state.get("image_ids") or []
     history = state.get("history") or []
 
     decision = await decide_answer_or_sections(
         message_text=message_text,
         base_system_prompt=base_system_prompt,
-        section_names=section_names,
+        section_options=section_options,
         image_ids=image_ids,
         history=history,
     )
@@ -173,16 +174,17 @@ async def _generate(state: BotState) -> BotState:
         )
         return state
 
-    selected_names = [str(name) for name in (decision.get("sections") or [])]
+    selected_numbers = [number for number in (decision.get("sections") or []) if isinstance(number, int)]
+    selected_ids = map_section_ids_by_numbers(section_options, selected_numbers)
     logger.info(
         "AI decision business_id=%s user_id=%s mode=request_sections knowledge_sections=%s",
         state["business_id"],
         state["user_id"],
-        selected_names,
+        selected_numbers,
     )
-    sections_map = get_sections_map_by_names(state["business_id"], selected_names)
-    selected_sections = filter_sections(sections_map, selected_names)
-    blocks = [f"[{name}]\n{text}" for name, text in selected_sections.items()]
+    sections_map = get_sections_map_by_ids(state["business_id"], selected_ids)
+    selected_sections = filter_sections(sections_map, selected_ids)
+    blocks = [f"[{section['title']}]\n{section['text']}" for section in selected_sections]
     sections_text = "\n\n".join(blocks)
     effective_system_prompt = (
         f"{base_system_prompt}\n\n"
@@ -200,7 +202,7 @@ async def _generate(state: BotState) -> BotState:
         "AI raw answer business_id=%s user_id=%s knowledge_sections=%s answer=%s",
         state["business_id"],
         state["user_id"],
-        list(selected_sections.keys()),
+        [section["title"] for section in selected_sections],
         _preview(raw_reply_text),
     )
     state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
@@ -210,7 +212,7 @@ async def _generate(state: BotState) -> BotState:
         "AI answer business_id=%s user_id=%s knowledge_sections=%s answer=%s",
         state["business_id"],
         state["user_id"],
-        list(selected_sections.keys()),
+        [section["title"] for section in selected_sections],
         _preview(state["reply_text"]),
     )
     return state

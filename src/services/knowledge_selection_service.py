@@ -15,7 +15,7 @@ def parse_mode_response(raw: str) -> dict[str, Any]:
 
 def _normalize_decision(
     payload: dict[str, Any],
-    allowed: set[str],
+    allowed: set[int],
     allowed_image_ids: set[str],
 ) -> dict[str, Any]:
     def _normalize_image_ids(raw_values: Any, allowed_image_ids: set[str]) -> list[str]:
@@ -53,7 +53,18 @@ def _normalize_decision(
         values = payload.get("sections")
         if not isinstance(values, list):
             return {"mode": "request_sections", "sections": []}
-        sections = [str(v) for v in values if isinstance(v, str) and str(v) in allowed]
+        sections: list[int] = []
+        seen: set[int] = set()
+        for value in values:
+            number: int | None = None
+            if isinstance(value, int):
+                number = value
+            elif isinstance(value, str) and value.strip().isdigit():
+                number = int(value.strip())
+            if number is None or number not in allowed or number in seen:
+                continue
+            seen.add(number)
+            sections.append(number)
         return {"mode": "request_sections", "sections": sections}
 
     return {}
@@ -63,17 +74,26 @@ async def decide_answer_or_sections(
     *,
     message_text: str,
     base_system_prompt: str,
-    section_names: list[str],
+    section_options: list[dict],
     image_ids: list[str],
     history: list[dict] | None = None,
 ) -> dict[str, Any]:
-    allowed = set(section_names)
+    allowed = {
+        option["number"]
+        for option in section_options
+        if isinstance(option.get("number"), int) and isinstance(option.get("title"), str)
+    }
     allowed_images = set(image_ids)
+    section_lines = "\n".join(
+        f"{option['number']}. {option['title']}"
+        for option in section_options
+        if isinstance(option.get("number"), int) and isinstance(option.get("title"), str)
+    )
     selector_system = (
         f"{base_system_prompt}\n\n"
         "You must decide one of three actions and return ONLY JSON.\n"
         "Action 1 (direct answer): {\"mode\":\"answer\",\"answer\":\"...\",\"image_ids\":[\"ID\"]}\n"
-        "Action 2 (request sections): {\"mode\":\"request_sections\",\"sections\":[\"NAME\",\"NAME\"]}\n"
+        "Action 2 (request sections): {\"mode\":\"request_sections\",\"sections\":[1,2]}\n"
         "Action 3 (handoff): {\"mode\":\"handoff\",\"lang\":\"...\"}\n"
         "If you need business details, request sections.\n"
         "For a direct answer to a user always use the same language that as the user used in their question."
@@ -81,8 +101,8 @@ async def decide_answer_or_sections(
         "Use handoff only when the user explicitly asks for a human operator or escalation.\n"
         "For handoff, set lang to the user's language code (for example: de, en, es).\n"
         "If relevant images are available, include image_ids in answer mode.\n"
-        "Use only section names from the allowed list.\n\n"
-        f"Allowed section names: {', '.join(section_names)}\n"
+        "Use only section numbers from the allowed list.\n\n"
+        f"Allowed sections:\n{section_lines}\n"
         f"Allowed image IDs (optional for answer mode, max 3): {', '.join(image_ids)}"
     )
 
@@ -99,9 +119,9 @@ async def decide_answer_or_sections(
     repair_system = (
         "Return ONLY valid JSON in one of these exact shapes:\n"
         "{\"mode\":\"answer\",\"answer\":\"...\",\"image_ids\":[\"ID\"]}\n"
-        "{\"mode\":\"request_sections\",\"sections\":[\"NAME\",\"NAME\"]}\n"
+        "{\"mode\":\"request_sections\",\"sections\":[1,2]}\n"
         "{\"mode\":\"handoff\",\"lang\":\"...\"}\n"
-        f"Allowed section names: {', '.join(section_names)}\n"
+        f"Allowed sections:\n{section_lines}\n"
         f"Allowed image IDs (optional for answer mode, max 3): {', '.join(image_ids)}"
     )
     repair_prompt = (
