@@ -116,6 +116,8 @@ async def decide_answer_or_sections(
     )
     selector_system = (
         f"{base_system_prompt}\n\n"
+        "You are a business purpose bot, consulting users based on the provided business knowledge. "
+        "If a user asks an unrelated question, briefly respond that you only answer regarding the business. "
         "You must decide one of three actions and return ONLY JSON.\n"
         "Action 1 (direct answer): {\"mode\":\"answer\",\"answer\":\"...\",\"image_ids\":[\"ID\"]}\n"
         "Action 2 (request sections): {\"mode\":\"request_sections\",\"sections\":[1,2]}\n"
