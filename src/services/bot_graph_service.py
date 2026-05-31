@@ -277,9 +277,17 @@ async def _persist(state: BotState) -> BotState:
     message_text = state["message_text"]
     reply_text = state["reply_text"]
 
-    await save_turn(chat_key, "user", message_text)
-    await save_turn(chat_key, "assistant", reply_text)
-    await prune_history(chat_key)
+    try:
+        await save_turn(chat_key, "user", message_text)
+        await save_turn(chat_key, "assistant", reply_text)
+        await prune_history(chat_key)
+    except Exception:
+        logger.exception(
+            "History persistence failed business_id=%s user_id=%s chat_key=%s",
+            state["business_id"],
+            state["user_id"],
+            chat_key,
+        )
     return state
 
 
