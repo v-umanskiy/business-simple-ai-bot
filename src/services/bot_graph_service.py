@@ -14,7 +14,7 @@ from src.services.business_knowledge_sections_service import (
 from src.services.channel_policy_service import resolve_channel_policy
 from src.services.handoff_message_service import resolve_handoff_message
 from src.services.history_service import load_model_history, prune_history, save_turn
-from src.services.knowledge_selection_service import decide_answer_or_sections
+from src.services.knowledge_selection_service import decide_next_action
 from src.services.reply_format_service import normalize_plain_text_reply
 from src.services.reply_length_service import (
     add_reply_limit_instruction,
@@ -23,7 +23,6 @@ from src.services.reply_length_service import (
     truncate_reply_after_length_repair,
     validate_reply_length,
 )
-from src.services.text_generation_service import generate_reply
 
 logger = logging.getLogger(__name__)
 
@@ -120,99 +119,105 @@ async def _generate(state: BotState) -> BotState:
     section_options = state.get("section_options") or []
     image_ids = state.get("image_ids") or []
     history = state.get("history") or []
+    loaded_section_ids: list[str] = []
+    loaded_sections: list[dict] = []
 
-    decision = await decide_answer_or_sections(
+    for section_request_count in range(3):
+        remaining_options = [
+            option for option in section_options if option["section_id"] not in loaded_section_ids
+        ]
+        if not remaining_options:
+            break
+
+        decision = await decide_next_action(
+            message_text=message_text,
+            base_system_prompt=base_system_prompt,
+            section_options=remaining_options,
+            image_ids=image_ids,
+            history=history,
+            provided_sections=loaded_sections,
+            allow_section_requests=True,
+        )
+
+        mode = str(decision.get("mode") or "")
+        if mode == "answer":
+            return _apply_answer_decision(state, decision)
+        if mode == "handoff":
+            return _apply_handoff_decision(state, decision)
+
+        selected_numbers = [number for number in (decision.get("sections") or []) if isinstance(number, int)]
+        selected_ids = map_section_ids_by_numbers(remaining_options, selected_numbers)
+        logger.info(
+            "AI decision business_id=%s user_id=%s mode=request_sections round=%s knowledge_sections=%s",
+            state["business_id"],
+            state["user_id"],
+            section_request_count + 1,
+            selected_numbers,
+        )
+        if not selected_ids:
+            break
+
+        sections_map = get_sections_map_by_ids(state["business_id"], selected_ids)
+        selected_sections = filter_sections(sections_map, selected_ids)
+        loaded_section_ids.extend(selected_ids)
+        loaded_sections.extend(selected_sections)
+
+    final_decision = await decide_next_action(
         message_text=message_text,
         base_system_prompt=base_system_prompt,
-        section_options=section_options,
+        section_options=[],
         image_ids=image_ids,
         history=history,
+        provided_sections=loaded_sections,
+        allow_section_requests=False,
     )
+    if final_decision.get("mode") == "handoff":
+        return _apply_handoff_decision(state, final_decision)
+    return _apply_answer_decision(state, final_decision)
 
-    mode = str(decision.get("mode") or "")
-    if mode == "answer":
-        state["branch"] = "reply_text"
-        raw_reply_text = str(decision.get("answer") or "")
-        logger.info(
-            "AI raw answer business_id=%s user_id=%s mode=answer answer=%s",
-            state["business_id"],
-            state["user_id"],
-            _preview(raw_reply_text),
-        )
-        state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
-        state["lang"] = ""
-        selected_image_ids = [str(x) for x in (decision.get("image_ids") or [])]
-        state["image_ids"] = selected_image_ids
-        image_url_map = state.get("image_url_map") or {}
-        state["image_urls"] = [image_url_map[image_id] for image_id in selected_image_ids if image_id in image_url_map]
-        logger.info(
-            "AI decision business_id=%s user_id=%s mode=answer image_ids=%s answer=%s",
-            state["business_id"],
-            state["user_id"],
-            selected_image_ids,
-            _preview(state["reply_text"]),
-        )
-        return state
-    if mode == "handoff":
-        state["branch"] = "handoff"
-        state["lang"] = str(decision.get("lang") or "en")
-        raw_reply_text = resolve_handoff_message(state.get("business_config") or {}, state["lang"])
-        logger.info(
-            "AI raw answer business_id=%s user_id=%s mode=handoff answer=%s",
-            state["business_id"],
-            state["user_id"],
-            _preview(raw_reply_text),
-        )
-        state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
-        state["reply_text"] = truncate_reply(state["reply_text"], state["max_reply_chars"])
-        logger.info(
-            "AI decision business_id=%s user_id=%s mode=handoff lang=%s answer=%s",
-            state["business_id"],
-            state["user_id"],
-            state["lang"],
-            _preview(state["reply_text"]),
-        )
-        return state
 
-    selected_numbers = [number for number in (decision.get("sections") or []) if isinstance(number, int)]
-    selected_ids = map_section_ids_by_numbers(section_options, selected_numbers)
+def _apply_answer_decision(state: BotState, decision: dict[str, Any]) -> BotState:
+    raw_reply_text = str(decision.get("answer") or "")
     logger.info(
-        "AI decision business_id=%s user_id=%s mode=request_sections knowledge_sections=%s",
+        "AI raw answer business_id=%s user_id=%s mode=answer answer=%s",
         state["business_id"],
         state["user_id"],
-        selected_numbers,
+        _preview(raw_reply_text),
     )
-    sections_map = get_sections_map_by_ids(state["business_id"], selected_ids)
-    selected_sections = filter_sections(sections_map, selected_ids)
-    blocks = [f"[{section['title']}]\n{section['text']}" for section in selected_sections]
-    sections_text = "\n\n".join(blocks)
-    effective_system_prompt = (
-        f"{base_system_prompt}\n\n"
-        "Use the provided business knowledge sections as the primary source for factual answers. "
-        "If required information is missing in these sections, say that clearly.\n\n"
-        f"Provided knowledge sections:\n{sections_text}"
-    )
-
-    raw_reply_text = await generate_reply(
-        message_text,
-        effective_system_prompt,
-        state.get("history") or [],
-    )
+    state["branch"] = "reply_text"
+    state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
+    state["lang"] = ""
+    selected_image_ids = [str(x) for x in (decision.get("image_ids") or [])]
+    state["image_ids"] = selected_image_ids
+    image_url_map = state.get("image_url_map") or {}
+    state["image_urls"] = [image_url_map[image_id] for image_id in selected_image_ids if image_id in image_url_map]
     logger.info(
-        "AI raw answer business_id=%s user_id=%s knowledge_sections=%s answer=%s",
+        "AI decision business_id=%s user_id=%s mode=answer image_ids=%s answer=%s",
         state["business_id"],
         state["user_id"],
-        [section["title"] for section in selected_sections],
+        selected_image_ids,
+        _preview(state["reply_text"]),
+    )
+    return state
+
+
+def _apply_handoff_decision(state: BotState, decision: dict[str, Any]) -> BotState:
+    state["branch"] = "handoff"
+    state["lang"] = str(decision.get("lang") or "en")
+    raw_reply_text = resolve_handoff_message(state.get("business_config") or {}, state["lang"])
+    logger.info(
+        "AI raw answer business_id=%s user_id=%s mode=handoff answer=%s",
+        state["business_id"],
+        state["user_id"],
         _preview(raw_reply_text),
     )
     state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
-    state["branch"] = "reply_text"
-    state["lang"] = ""
+    state["reply_text"] = truncate_reply(state["reply_text"], state["max_reply_chars"])
     logger.info(
-        "AI answer business_id=%s user_id=%s knowledge_sections=%s answer=%s",
+        "AI decision business_id=%s user_id=%s mode=handoff lang=%s answer=%s",
         state["business_id"],
         state["user_id"],
-        [section["title"] for section in selected_sections],
+        state["lang"],
         _preview(state["reply_text"]),
     )
     return state

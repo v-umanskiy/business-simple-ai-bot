@@ -42,6 +42,7 @@ def _normalize_decision(
     payload: dict[str, Any],
     allowed: set[int],
     allowed_image_ids: set[str],
+    allow_section_requests: bool,
 ) -> dict[str, Any]:
     def _normalize_image_ids(raw_values: Any, allowed_image_ids: set[str]) -> list[str]:
         if not isinstance(raw_values, list):
@@ -74,7 +75,7 @@ def _normalize_decision(
             return {"mode": "handoff", "lang": lang.strip().lower()}
         return {"mode": "handoff", "lang": "en"}
 
-    if mode == "request_sections":
+    if mode == "request_sections" and allow_section_requests:
         values = payload.get("sections")
         if not isinstance(values, list):
             return {"mode": "request_sections", "sections": []}
@@ -95,13 +96,53 @@ def _normalize_decision(
     return {}
 
 
-async def decide_answer_or_sections(
+def _format_section_options(section_options: list[dict]) -> str:
+    return "\n".join(
+        f"{option['number']}. {option['title']}"
+        for option in section_options
+        if isinstance(option.get("number"), int) and isinstance(option.get("title"), str)
+    )
+
+
+def _format_provided_sections(sections: list[dict]) -> str:
+    return "\n\n".join(f"[{section['title']}]\n{section['text']}" for section in sections)
+
+
+def _json_shapes(allow_section_requests: bool) -> list[str]:
+    shapes = [
+        '{"mode":"answer","answer":"...","image_ids":["ID"]}',
+    ]
+    if allow_section_requests:
+        shapes.append('{"mode":"request_sections","sections":[1,2]}')
+    shapes.append('{"mode":"handoff","lang":"..."}')
+    return shapes
+
+
+def _json_shapes_text(allow_section_requests: bool) -> str:
+    return "\n".join(_json_shapes(allow_section_requests))
+
+
+def _action_instructions(allow_section_requests: bool) -> str:
+    names = (
+        ["direct answer", "request sections", "handoff"]
+        if allow_section_requests
+        else ["direct answer", "handoff"]
+    )
+    return "\n".join(
+        f"Action {number} ({name}): {shape}"
+        for number, (name, shape) in enumerate(zip(names, _json_shapes(allow_section_requests)), start=1)
+    )
+
+
+async def decide_next_action(
     *,
     message_text: str,
     base_system_prompt: str,
     section_options: list[dict],
     image_ids: list[str],
     history: list[dict] | None = None,
+    provided_sections: list[dict] | None = None,
+    allow_section_requests: bool = True,
 ) -> dict[str, Any]:
     allowed = {
         option["number"]
@@ -109,27 +150,28 @@ async def decide_answer_or_sections(
         if isinstance(option.get("number"), int) and isinstance(option.get("title"), str)
     }
     allowed_images = set(image_ids)
-    section_lines = "\n".join(
-        f"{option['number']}. {option['title']}"
-        for option in section_options
-        if isinstance(option.get("number"), int) and isinstance(option.get("title"), str)
+    section_lines = _format_section_options(section_options)
+    provided_sections_text = _format_provided_sections(provided_sections or [])
+    section_request_instruction = (
+        "If you need business details that are not in the provided sections, request sections.\n"
+        if allow_section_requests
+        else "Use the provided business knowledge sections as the factual source. If they are insufficient, answer with that limitation or choose handoff.\n"
     )
     selector_system = (
         f"{base_system_prompt}\n\n"
         "You are a business purpose bot, consulting users based on the provided business knowledge. "
         "If a user asks an unrelated question, briefly respond that you only answer regarding the business. "
-        "You must decide one of three actions and return ONLY JSON.\n"
-        "Action 1 (direct answer): {\"mode\":\"answer\",\"answer\":\"...\",\"image_ids\":[\"ID\"]}\n"
-        "Action 2 (request sections): {\"mode\":\"request_sections\",\"sections\":[1,2]}\n"
-        "Action 3 (handoff): {\"mode\":\"handoff\",\"lang\":\"...\"}\n"
-        "If you need business details, request sections.\n"
+        "You must decide the next action and return ONLY JSON.\n"
+        f"{_action_instructions(allow_section_requests)}\n"
+        f"{section_request_instruction}"
         "For a direct answer to a user always use the same language that as the user used in their question. "
         "Do NOT use markdown (e.g. ** for bold). You can use only plain text options if needed, e.g. numbers, dashes, capitalizing. "
         "Use handoff only when the user explicitly asks for a human operator or escalation.\n"
         "For handoff, set lang to the user's language code (for example: de, en, es).\n"
         "If relevant images are available, include image_ids in answer mode.\n"
         "Use only section numbers from the allowed list.\n\n"
-        f"Allowed sections:\n{section_lines}\n"
+        f"Provided knowledge sections:\n{provided_sections_text}\n\n"
+        f"Allowed additional sections:\n{section_lines}\n"
         f"Allowed image IDs (optional for answer mode, max 3): {', '.join(image_ids)}"
     )
 
@@ -146,15 +188,13 @@ async def decide_answer_or_sections(
         system_prompt=selector_system,
         history=history or [],
     )
-    decision = _normalize_decision(parse_mode_response(raw), allowed, allowed_images)
+    decision = _normalize_decision(parse_mode_response(raw), allowed, allowed_images, allow_section_requests)
     if decision:
         return decision
 
     repair_system = (
         "Return ONLY valid JSON in one of these exact shapes:\n"
-        "{\"mode\":\"answer\",\"answer\":\"...\",\"image_ids\":[\"ID\"]}\n"
-        "{\"mode\":\"request_sections\",\"sections\":[1,2]}\n"
-        "{\"mode\":\"handoff\",\"lang\":\"...\"}\n"
+        f"{_json_shapes_text(allow_section_requests)}\n"
         f"Allowed sections:\n{section_lines}\n"
         f"Allowed image IDs (optional for answer mode, max 3): {', '.join(image_ids)}"
     )
@@ -174,8 +214,16 @@ async def decide_answer_or_sections(
         system_prompt=repair_system,
         history=history or [],
     )
-    repaired_decision = _normalize_decision(parse_mode_response(repaired_raw), allowed, allowed_images)
+    repaired_decision = _normalize_decision(
+        parse_mode_response(repaired_raw),
+        allowed,
+        allowed_images,
+        allow_section_requests,
+    )
     if repaired_decision:
         return repaired_decision
 
     return {"mode": "answer", "answer": "Sorry, I could not process that request right now."}
+
+
+decide_answer_or_sections = decide_next_action
