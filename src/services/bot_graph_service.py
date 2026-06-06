@@ -26,6 +26,11 @@ from src.services.reply_length_service import (
 
 logger = logging.getLogger(__name__)
 
+FIRST_WHATSAPP_REPLY_FOOTER = (
+    "AI-generated responses may contain errors. Please verify important information with a human.\n\n"
+    "Developed by system-craft.net"
+)
+
 
 class BotState(TypedDict, total=False):
     business_id: str
@@ -46,6 +51,7 @@ class BotState(TypedDict, total=False):
     branch: str
     lang: str
     reply_text: str
+    additional_reply: str
     length_retry_count: int
     length_valid: bool
     error: str
@@ -97,8 +103,14 @@ async def _load_context(state: BotState) -> BotState:
     state["image_urls"] = []
     state["chat_key"] = chat_key
     state["history"] = history
+    state["additional_reply"] = ""
+    if state["channel"] == "whatsapp" and not history:
+        configured_addendum = str(business_config.get("first_reply_addendum") or "").strip()
+        state["additional_reply"] = "\n\n".join(
+            part for part in (configured_addendum, FIRST_WHATSAPP_REPLY_FOOTER) if part
+        )
     logger.info(
-        "Bot context loaded business_id=%s user_id=%s channel=%s max_reply_chars=%s knowledge_sections=%s image_ids=%s history_turns=%s",
+        "Bot context loaded business_id=%s user_id=%s channel=%s max_reply_chars=%s knowledge_sections=%s image_ids=%s history_turns=%s additional_reply=%s",
         business_id,
         user_id,
         state["channel"],
@@ -106,6 +118,7 @@ async def _load_context(state: BotState) -> BotState:
         [option.get("title") for option in section_options],
         image_ids,
         len(history),
+        _preview(state["additional_reply"]),
     )
     return state
 
@@ -379,6 +392,7 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
             "channel": state["channel"],
             "max_reply_chars": state["max_reply_chars"],
             "reply_text": result["error"],
+            "additional_reply": "",
             "number_images": 0,
             "image_url_1": "",
             "image_url_2": "",
@@ -399,6 +413,7 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
         "max_reply_chars": result.get("max_reply_chars") or state["max_reply_chars"],
         "lang": result.get("lang") or "",
         "reply_text": result.get("reply_text") or "",
+        "additional_reply": result.get("additional_reply") or "",
         "number_images": number_images,
         "image_url_1": image_url_1,
         "image_url_2": image_url_2,
