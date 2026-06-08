@@ -192,7 +192,12 @@ def _decision_response_schema(allow_section_requests: bool) -> dict[str, Any]:
         "type": "object",
         "properties": {
             "mode": {"type": "string", "enum": modes},
-            "answer": {"type": ["string", "null"]},
+            "answer": {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "null"},
+                ]
+            },
             "image_ids": {
                 "type": "array",
                 "items": {"type": "string"},
@@ -201,7 +206,12 @@ def _decision_response_schema(allow_section_requests: bool) -> dict[str, Any]:
                 "type": "array",
                 "items": {"type": "integer"},
             },
-            "lang": {"type": ["string", "null"]},
+            "lang": {
+                "anyOf": [
+                    {"type": "string"},
+                    {"type": "null"},
+                ]
+            },
         },
         "required": ["mode", "answer", "image_ids", "sections", "lang"],
         "additionalProperties": False,

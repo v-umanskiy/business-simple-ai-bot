@@ -21,8 +21,6 @@ class GeminiProvider(ModelProvider):
     ) -> str:
         def _call() -> str:
             contents = []
-            if system_prompt:
-                contents.append({"role": "user", "parts": [{"text": system_prompt}]})
             if history:
                 for turn in history:
                     role = turn.get("role")
@@ -32,9 +30,16 @@ class GeminiProvider(ModelProvider):
                     gemini_role = "model" if role == "assistant" else "user"
                     contents.append({"role": gemini_role, "parts": [{"text": text}]})
             contents.append({"role": "user", "parts": [{"text": prompt}]})
+            config = {}
+            if system_prompt:
+                config["system_instruction"] = system_prompt
+            if response_schema:
+                config["response_mime_type"] = "application/json"
+                config["response_json_schema"] = response_schema
             response = self._client.models.generate_content(
                 model=self._model,
                 contents=contents,
+                **({"config": config} if config else {}),
             )
             return (response.text or "").strip() or "No response"
 
