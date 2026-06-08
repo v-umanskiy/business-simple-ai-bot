@@ -17,6 +17,7 @@ class GeminiProvider(ModelProvider):
         prompt: str,
         system_prompt: str | None = None,
         history: list[dict] | None = None,
+        response_schema: dict | None = None,
     ) -> str:
         def _call() -> str:
             contents = []

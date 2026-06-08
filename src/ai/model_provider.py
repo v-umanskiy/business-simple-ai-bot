@@ -9,6 +9,7 @@ class ModelProvider(ABC):
         prompt: str,
         system_prompt: str | None = None,
         history: list[dict] | None = None,
+        response_schema: dict | None = None,
     ) -> str:
         raise NotImplementedError
 

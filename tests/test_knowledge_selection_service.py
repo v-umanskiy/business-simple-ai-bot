@@ -1,6 +1,10 @@
 import unittest
 
-from src.services.knowledge_selection_service import _select_decision, parse_mode_response
+from src.services.knowledge_selection_service import (
+    _decision_response_schema,
+    _select_decision,
+    parse_mode_response,
+)
 
 
 class KnowledgeSelectionServiceTests(unittest.TestCase):
@@ -39,6 +43,21 @@ class KnowledgeSelectionServiceTests(unittest.TestCase):
         """
 
         self.assertEqual(_select_decision(raw, set(), set(), False), {})
+
+    def test_decision_response_schema_allows_section_requests_during_selection(self):
+        schema = _decision_response_schema(True)
+
+        self.assertEqual(
+            schema["properties"]["mode"]["enum"],
+            ["answer", "request_sections", "handoff"],
+        )
+        self.assertFalse(schema["additionalProperties"])
+        self.assertEqual(set(schema["required"]), set(schema["properties"]))
+
+    def test_decision_response_schema_excludes_section_requests_from_final_answer(self):
+        schema = _decision_response_schema(False)
+
+        self.assertEqual(schema["properties"]["mode"]["enum"], ["answer", "handoff"])
 
 
 if __name__ == "__main__":

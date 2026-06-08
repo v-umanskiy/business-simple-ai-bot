@@ -169,16 +169,43 @@ def _format_provided_sections(sections: list[dict]) -> str:
 
 def _json_shapes(allow_section_requests: bool) -> list[str]:
     shapes = [
-        '{"mode":"answer","answer":"...","image_ids":["ID"]}',
+        '{"mode":"answer","answer":"...","image_ids":["ID"],"sections":[],"lang":null}',
     ]
     if allow_section_requests:
-        shapes.append('{"mode":"request_sections","sections":[1,2]}')
-    shapes.append('{"mode":"handoff","lang":"..."}')
+        shapes.append(
+            '{"mode":"request_sections","answer":null,"image_ids":[],"sections":[1,2],"lang":null}'
+        )
+    shapes.append('{"mode":"handoff","answer":null,"image_ids":[],"sections":[],"lang":"..."}')
     return shapes
 
 
 def _json_shapes_text(allow_section_requests: bool) -> str:
     return "\n".join(_json_shapes(allow_section_requests))
+
+
+def _decision_response_schema(allow_section_requests: bool) -> dict[str, Any]:
+    modes = ["answer", "handoff"]
+    if allow_section_requests:
+        modes.insert(1, "request_sections")
+
+    return {
+        "type": "object",
+        "properties": {
+            "mode": {"type": "string", "enum": modes},
+            "answer": {"type": ["string", "null"]},
+            "image_ids": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "sections": {
+                "type": "array",
+                "items": {"type": "integer"},
+            },
+            "lang": {"type": ["string", "null"]},
+        },
+        "required": ["mode", "answer", "image_ids", "sections", "lang"],
+        "additionalProperties": False,
+    }
 
 
 def _action_instructions(allow_section_requests: bool) -> str:
@@ -246,6 +273,7 @@ async def decide_next_action(
         prompt=message_text,
         system_prompt=selector_system,
         history=history or [],
+        response_schema=_decision_response_schema(allow_section_requests),
     )
     decision = _select_decision(raw, allowed, allowed_images, allow_section_requests)
     if decision:
@@ -274,6 +302,7 @@ async def decide_next_action(
         prompt=repair_prompt,
         system_prompt=repair_system,
         history=history or [],
+        response_schema=_decision_response_schema(allow_section_requests),
     )
     repaired_decision = _select_decision(
         repaired_raw,

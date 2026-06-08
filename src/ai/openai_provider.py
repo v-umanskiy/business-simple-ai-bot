@@ -17,6 +17,7 @@ class OpenAIProvider(ModelProvider):
         prompt: str,
         system_prompt: str | None = None,
         history: list[dict] | None = None,
+        response_schema: dict | None = None,
     ) -> str:
         def _call() -> str:
             messages = []
@@ -29,9 +30,22 @@ class OpenAIProvider(ModelProvider):
                     if role in {"user", "assistant"} and text:
                         messages.append({"role": role, "content": text})
             messages.append({"role": "user", "content": prompt})
+            response_format = (
+                {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "bot_decision",
+                        "strict": True,
+                        "schema": response_schema,
+                    },
+                }
+                if response_schema
+                else None
+            )
             response = self._client.chat.completions.create(
                 model=self._model,
                 messages=messages,
+                **({"response_format": response_format} if response_format else {}),
             )
             return (response.choices[0].message.content or "").strip() or "No response"
 
