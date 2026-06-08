@@ -16,6 +16,28 @@ def parse_mode_response(raw: str) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
+def _parse_mode_response_candidates(raw: str) -> list[dict[str, Any]]:
+    text = (raw or "").strip()
+    candidates: list[dict[str, Any]] = []
+    decoder = json.JSONDecoder()
+    offset = 0
+
+    while offset < len(text):
+        object_start = text.find("{", offset)
+        if object_start < 0:
+            break
+        try:
+            payload, object_end = decoder.raw_decode(text, object_start)
+        except json.JSONDecodeError:
+            offset = object_start + 1
+            continue
+        if isinstance(payload, dict):
+            candidates.append(payload)
+        offset = object_end
+
+    return candidates
+
+
 def _preview(value: Any, *, max_length: int) -> str:
     text = str(value or "")
     text = text.replace("\n", "\\n").replace("\r", "\\r")
@@ -92,6 +114,43 @@ def _normalize_decision(
             seen.add(number)
             sections.append(number)
         return {"mode": "request_sections", "sections": sections}
+
+    return {}
+
+
+def _select_decision(
+    raw: str,
+    allowed: set[int],
+    allowed_image_ids: set[str],
+    allow_section_requests: bool,
+) -> dict[str, Any]:
+    candidates = [
+        decision
+        for payload in _parse_mode_response_candidates(raw)
+        if (
+            decision := _normalize_decision(
+                payload,
+                allowed,
+                allowed_image_ids,
+                allow_section_requests,
+            )
+        )
+    ]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    if allow_section_requests:
+        requested_sections: list[int] = []
+        seen: set[int] = set()
+        for decision in candidates:
+            if decision.get("mode") != "request_sections":
+                continue
+            for section in decision.get("sections") or []:
+                if section not in seen:
+                    seen.add(section)
+                    requested_sections.append(section)
+        if requested_sections:
+            return {"mode": "request_sections", "sections": requested_sections}
 
     return {}
 
@@ -188,13 +247,15 @@ async def decide_next_action(
         system_prompt=selector_system,
         history=history or [],
     )
-    decision = _normalize_decision(parse_mode_response(raw), allowed, allowed_images, allow_section_requests)
+    decision = _select_decision(raw, allowed, allowed_images, allow_section_requests)
     if decision:
         return decision
 
     repair_system = (
         "Return ONLY valid JSON in one of these exact shapes:\n"
         f"{_json_shapes_text(allow_section_requests)}\n"
+        "Do not invent or preserve unsupported business facts from the invalid output. "
+        "If the invalid output contains both request_sections and answer decisions, return only request_sections.\n"
         f"Allowed sections:\n{section_lines}\n"
         f"Allowed image IDs (optional for answer mode, max 3): {', '.join(image_ids)}"
     )
@@ -214,8 +275,8 @@ async def decide_next_action(
         system_prompt=repair_system,
         history=history or [],
     )
-    repaired_decision = _normalize_decision(
-        parse_mode_response(repaired_raw),
+    repaired_decision = _select_decision(
+        repaired_raw,
         allowed,
         allowed_images,
         allow_section_requests,
