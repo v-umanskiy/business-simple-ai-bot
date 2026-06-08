@@ -9,7 +9,7 @@ from src.services.secret_service import get_secret
 
 class OpenAIProvider(ModelProvider):
     def __init__(self):
-        self._model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+        self._model = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
         self._client = OpenAI(api_key=get_secret("OPENAI_API_KEY"))
 
     async def generate_reply(
