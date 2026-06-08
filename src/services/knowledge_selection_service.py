@@ -223,7 +223,7 @@ async def decide_next_action(
         "You must decide the next action and return ONLY JSON.\n"
         f"{_action_instructions(allow_section_requests)}\n"
         f"{section_request_instruction}"
-        "For a direct answer to a user always use the same language that as the user used in their question. "
+        "Reply in the same language as the user. To determine the response language, mind the user_prompt and history. "
         "Do NOT use markdown (e.g. ** for bold). You can use only plain text options if needed, e.g. numbers, dashes, capitalizing. "
         "Use handoff only when the user explicitly asks for a human operator or escalation.\n"
         "For handoff, set lang to the user's language code (for example: de, en, es).\n"
