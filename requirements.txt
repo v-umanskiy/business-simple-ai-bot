@@ -5,3 +5,4 @@ openai
 google-genai
 google-api-core
 langgraph
+pydantic>=2

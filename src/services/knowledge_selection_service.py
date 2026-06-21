@@ -1,10 +1,28 @@
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 
+from pydantic import BaseModel, ConfigDict, ValidationError
 from src.ai.model_provider import get_model_provider
 
 logger = logging.getLogger(__name__)
+
+
+class BotDecisionBase(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    answer: str | None
+    image_ids: list[str]
+    sections: list[int]
+    lang: str | None
+
+
+class BotDecisionWithSectionRequest(BotDecisionBase):
+    mode: Literal["answer", "request_sections", "handoff"]
+
+
+class BotDecisionFinal(BotDecisionBase):
+    mode: Literal["answer", "handoff"]
 
 
 def parse_mode_response(raw: str) -> dict[str, Any]:
@@ -124,18 +142,23 @@ def _select_decision(
     allowed_image_ids: set[str],
     allow_section_requests: bool,
 ) -> dict[str, Any]:
-    candidates = [
-        decision
-        for payload in _parse_mode_response_candidates(raw)
-        if (
-            decision := _normalize_decision(
-                payload,
-                allowed,
-                allowed_image_ids,
-                allow_section_requests,
-            )
+    model = _decision_model(allow_section_requests)
+    candidates = []
+    for payload in _parse_mode_response_candidates(raw):
+        try:
+            typed_payload = model.model_validate(payload)
+        except ValidationError:
+            continue
+
+        decision = _normalize_decision(
+            typed_payload.model_dump(),
+            allowed,
+            allowed_image_ids,
+            allow_section_requests,
         )
-    ]
+        if decision:
+            candidates.append(decision)
+
     if len(candidates) == 1:
         return candidates[0]
 
@@ -183,39 +206,20 @@ def _json_shapes_text(allow_section_requests: bool) -> str:
     return "\n".join(_json_shapes(allow_section_requests))
 
 
-def _decision_response_schema(allow_section_requests: bool) -> dict[str, Any]:
-    modes = ["answer", "handoff"]
-    if allow_section_requests:
-        modes.insert(1, "request_sections")
+def _decision_model(allow_section_requests: bool) -> type[BotDecisionBase]:
+    return BotDecisionWithSectionRequest if allow_section_requests else BotDecisionFinal
 
-    return {
-        "type": "object",
-        "properties": {
-            "mode": {"type": "string", "enum": modes},
-            "answer": {
-                "anyOf": [
-                    {"type": "string"},
-                    {"type": "null"},
-                ]
-            },
-            "image_ids": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
-            "sections": {
-                "type": "array",
-                "items": {"type": "integer"},
-            },
-            "lang": {
-                "anyOf": [
-                    {"type": "string"},
-                    {"type": "null"},
-                ]
-            },
-        },
-        "required": ["mode", "answer", "image_ids", "sections", "lang"],
-        "additionalProperties": False,
-    }
+
+def _strip_schema_titles(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _strip_schema_titles(item) for key, item in value.items() if key != "title"}
+    if isinstance(value, list):
+        return [_strip_schema_titles(item) for item in value]
+    return value
+
+
+def _decision_response_schema(allow_section_requests: bool) -> dict[str, Any]:
+    return _strip_schema_titles(_decision_model(allow_section_requests).model_json_schema())
 
 
 def _action_instructions(allow_section_requests: bool) -> str:
