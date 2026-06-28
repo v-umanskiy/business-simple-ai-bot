@@ -1,19 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+usage() {
+  echo "Usage: $0 dev|prod" >&2
+}
+
+if [[ $# -ne 1 ]]; then
+  usage
+  exit 2
+fi
+
+ENVIRONMENT="$1"
 PROFILE="personal"
 ZIP_NAME="deploy.zip"
 BUILD_DIR="build"
 REQ_FILE="requirements.txt"
 S3_BUCKET="${S3_BUCKET:-}"
-REGION="eu-central-1"
-LAMBDA_NAME="business_simple_ai_bot_prod"
-DEFAULT_S3_BUCKET="business-simple-ai-bot-prod-artifacts"
+
+case "$ENVIRONMENT" in
+  dev)
+    REGION="eu-west-1"
+    LAMBDA_NAME="business_simple_ai_bot_dev"
+    DEFAULT_S3_BUCKET="business-simple-ai-bot-dev-artifacts"
+    ;;
+  prod)
+    REGION="eu-central-1"
+    LAMBDA_NAME="business_simple_ai_bot_prod"
+    DEFAULT_S3_BUCKET="business-simple-ai-bot-prod-artifacts"
+    ;;
+  *)
+    usage
+    exit 2
+    ;;
+esac
 
 if [[ -z "$S3_BUCKET" ]]; then
   S3_BUCKET="$DEFAULT_S3_BUCKET"
 fi
 
+echo "==> Deploying $ENVIRONMENT to $LAMBDA_NAME in $REGION"
 echo "==> Cleaning build artifacts"
 rm -rf "$BUILD_DIR" "$ZIP_NAME"
 mkdir -p "$BUILD_DIR"
