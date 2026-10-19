@@ -23,6 +23,7 @@ from src.services.reply_length_service import (
     truncate_reply_after_length_repair,
     validate_reply_length,
 )
+from src.utils.log_utils import chars
 
 logger = logging.getLogger(__name__)
 
@@ -50,14 +51,6 @@ class BotState(TypedDict, total=False):
     length_retry_count: int
     length_valid: bool
     error: str
-
-
-def _preview(value: Any, *, max_length: int = 1200) -> str:
-    text = str(value or "")
-    text = text.replace("\n", "\\n").replace("\r", "\\r")
-    if len(text) <= max_length:
-        return text
-    return f"{text[:max_length]}..."
 
 
 async def _load_context(state: BotState) -> BotState:
@@ -102,7 +95,7 @@ async def _load_context(state: BotState) -> BotState:
     if state["channel"] == "whatsapp" and not history:
         state["additional_reply"] = str(business_config.get("first_reply_addendum") or "").strip()
     logger.info(
-        "Bot context loaded business_id=%s user_id=%s channel=%s max_reply_chars=%s knowledge_sections=%s image_ids=%s history_turns=%s additional_reply=%s",
+        "Bot context loaded business_id=%s user_id=%s channel=%s max_reply_chars=%s knowledge_sections=%s image_ids=%s history_turns=%s additional_reply_chars=%s",
         business_id,
         user_id,
         state["channel"],
@@ -110,7 +103,7 @@ async def _load_context(state: BotState) -> BotState:
         [option.get("title") for option in section_options],
         image_ids,
         len(history),
-        _preview(state["additional_reply"]),
+        chars(state["additional_reply"]),
     )
     return state
 
@@ -182,26 +175,19 @@ async def _generate(state: BotState) -> BotState:
 
 
 def _apply_answer_decision(state: BotState, decision: dict[str, Any]) -> BotState:
-    raw_reply_text = str(decision.get("answer") or "")
-    logger.info(
-        "AI raw answer business_id=%s user_id=%s mode=answer answer=%s",
-        state["business_id"],
-        state["user_id"],
-        _preview(raw_reply_text),
-    )
     state["branch"] = "reply_text"
-    state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
+    state["reply_text"] = normalize_plain_text_reply(str(decision.get("answer") or ""))
     state["lang"] = ""
     selected_image_ids = [str(x) for x in (decision.get("image_ids") or [])]
     state["image_ids"] = selected_image_ids
     image_url_map = state.get("image_url_map") or {}
     state["image_urls"] = [image_url_map[image_id] for image_id in selected_image_ids if image_id in image_url_map]
     logger.info(
-        "AI decision business_id=%s user_id=%s mode=answer image_ids=%s answer=%s",
+        "AI decision business_id=%s user_id=%s mode=answer image_ids=%s answer_chars=%s",
         state["business_id"],
         state["user_id"],
         selected_image_ids,
-        _preview(state["reply_text"]),
+        chars(state["reply_text"]),
     )
     return state
 
@@ -210,20 +196,14 @@ def _apply_handoff_decision(state: BotState, decision: dict[str, Any]) -> BotSta
     state["branch"] = "handoff"
     state["lang"] = str(decision.get("lang") or "en")
     raw_reply_text = resolve_handoff_message(state.get("business_config") or {}, state["lang"])
-    logger.info(
-        "AI raw answer business_id=%s user_id=%s mode=handoff answer=%s",
-        state["business_id"],
-        state["user_id"],
-        _preview(raw_reply_text),
-    )
     state["reply_text"] = normalize_plain_text_reply(raw_reply_text)
     state["reply_text"] = truncate_reply(state["reply_text"], state["max_reply_chars"])
     logger.info(
-        "AI decision business_id=%s user_id=%s mode=handoff lang=%s answer=%s",
+        "AI decision business_id=%s user_id=%s mode=handoff lang=%s answer_chars=%s",
         state["business_id"],
         state["user_id"],
         state["lang"],
-        _preview(state["reply_text"]),
+        chars(state["reply_text"]),
     )
     return state
 
@@ -361,12 +341,12 @@ async def run_bot_flow(payload: dict[str, Any]) -> dict[str, Any]:
         )
 
     logger.info(
-        "Received message business_id=%s user_id=%s channel=%s max_reply_chars=%s message=%s",
+        "Received message business_id=%s user_id=%s channel=%s max_reply_chars=%s message_chars=%s",
         state["business_id"],
         state["user_id"],
         state["channel"],
         state["max_reply_chars"],
-        _preview(state["message_text"]),
+        chars(state["message_text"]),
     )
 
     result = await get_graph().ainvoke(state)

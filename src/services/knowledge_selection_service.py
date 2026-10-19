@@ -4,6 +4,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, ValidationError
 from src.ai.model_provider import get_model_provider
+from src.utils.log_utils import chars
 
 logger = logging.getLogger(__name__)
 
@@ -54,28 +55,6 @@ def _parse_mode_response_candidates(raw: str) -> list[dict[str, Any]]:
         offset = object_end
 
     return candidates
-
-
-def _preview(value: Any, *, max_length: int) -> str:
-    text = str(value or "")
-    text = text.replace("\n", "\\n").replace("\r", "\\r")
-    if len(text) <= max_length:
-        return text
-    return f"{text[:max_length]}..."
-
-
-def _history_preview(history: list[dict] | None) -> list[dict]:
-    preview: list[dict] = []
-    for turn in history or []:
-        role = turn.get("role")
-        text = turn.get("text")
-        preview.append(
-            {
-                "role": role if isinstance(role, str) else "",
-                "text": _preview(text, max_length=120),
-            }
-        )
-    return preview
 
 
 def _normalize_decision(
@@ -277,11 +256,10 @@ async def decide_next_action(
 
     provider = get_model_provider()
     logger.info(
-        "LLM selector prompt system_prompt=%s history_turns=%s history_preview=%s user_prompt=%s",
-        _preview(selector_system, max_length=8000),
+        "LLM selector prompt system_prompt_chars=%s history_turns=%s user_prompt_chars=%s",
+        chars(selector_system),
         len(history or []),
-        _history_preview(history),
-        _preview(message_text, max_length=4000),
+        chars(message_text),
     )
     raw = await provider.generate_reply(
         prompt=message_text,
@@ -306,11 +284,10 @@ async def decide_next_action(
         f"Previous output:\n{raw}"
     )
     logger.info(
-        "LLM selector repair prompt system_prompt=%s history_turns=%s history_preview=%s user_prompt=%s",
-        _preview(repair_system, max_length=8000),
+        "LLM selector repair prompt system_prompt_chars=%s history_turns=%s user_prompt_chars=%s",
+        chars(repair_system),
         len(history or []),
-        _history_preview(history),
-        _preview(repair_prompt, max_length=4000),
+        chars(repair_prompt),
     )
     repaired_raw = await provider.generate_reply(
         prompt=repair_prompt,
