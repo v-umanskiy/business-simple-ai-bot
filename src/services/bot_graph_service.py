@@ -26,11 +26,6 @@ from src.services.reply_length_service import (
 
 logger = logging.getLogger(__name__)
 
-FIRST_WHATSAPP_REPLY_FOOTER = (
-    "AI-generated responses may contain errors. Please verify important information with a human.\n\n"
-    "Developed by system-craft.net"
-)
-
 
 class BotState(TypedDict, total=False):
     business_id: str
@@ -105,10 +100,7 @@ async def _load_context(state: BotState) -> BotState:
     state["history"] = history
     state["additional_reply"] = ""
     if state["channel"] == "whatsapp" and not history:
-        configured_addendum = str(business_config.get("first_reply_addendum") or "").strip()
-        state["additional_reply"] = "\n\n".join(
-            part for part in (configured_addendum, FIRST_WHATSAPP_REPLY_FOOTER) if part
-        )
+        state["additional_reply"] = str(business_config.get("first_reply_addendum") or "").strip()
     logger.info(
         "Bot context loaded business_id=%s user_id=%s channel=%s max_reply_chars=%s knowledge_sections=%s image_ids=%s history_turns=%s additional_reply=%s",
         business_id,
